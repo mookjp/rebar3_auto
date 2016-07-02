@@ -23,7 +23,7 @@
 -export([auto/0, flush/0]).
 
 -define(PROVIDER, auto).
--define(DEPS, [app_discovery]).
+-define(DEPS, [compile]).
 
 %% ===================================================================
 %% Public API
@@ -36,7 +36,7 @@ init(State) ->
             {bare, true},             % The task can be run by the user, always true
             {deps, ?DEPS},            % The list of dependencies
             {example, "rebar3 auto"}, % How to use the plugin
-            {opts, []},               % list of options understood by the plugin
+            {opts, [{run, $r, "run", undefined, "Run rebar3_run instead of shell"}]}, % list of options understood by the plugin
             {short_desc, "Automatically run compile task on change of source file and reload modules."},
             {desc, ""}
     ]),
@@ -44,12 +44,17 @@ init(State) ->
 
 -spec do(rebar_state:t()) -> {ok, rebar_state:t()} | {error, string()}.
 do(State) ->
-    spawn(fun() ->
-                  listen_on_project_apps(State),
-                  ?MODULE:auto()
+  spawn(fun() ->
+    listen_on_project_apps(State),
+    ?MODULE:auto()
           end),
     State1 = remove_from_plugin_paths(State),
-    rebar_prv_shell:do(State1).
+    case has_run_opt(State) of
+      true ->
+        rebar3_run:do(State1);
+      false ->
+        rebar_prv_shell:do(State1)
+    end.
 
 -spec format_error(any()) ->  iolist().
 format_error(Reason) ->
@@ -92,3 +97,18 @@ remove_from_plugin_paths(State) ->
                                                 orelse list_to_atom(Name) =:= enotify)
                                     end, PluginPaths),
     rebar_state:code_paths(State, all_plugin_deps, PluginsMinusAuto).
+
+has_run_opt(State) ->
+  {Args, _} = rebar_state:command_parsed_args(State),
+  case proplists:get_value(run, Args) of
+    undefined -> false;
+    _ ->
+      case lists:any(fun(E) -> E =:= rebar3_run end, rebar_state:get(State, plugins)) of
+        true ->
+          true;
+        _ ->
+          rebar_api:warn("run option was given, but you don't have rebar3_run plugin settings in rebar3.config."),
+          false
+      end
+  end.
+
